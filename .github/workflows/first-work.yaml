@@ -1,13 +1,13 @@
-name: First Workflow
+name: Ready to deploy
 
-on: push
+on: [push, workflow_dispatch]
 
 jobs:
-  my-first-jobs:
+  test-code:
     runs-on: ubuntu-latest
     steps:
-      - name: Print a message
-        run: echo "Hello this is my first action"
-
-      - name: Print Message 2
-        run: echo "Hello message 2..........."
+      - name: Print working dir
+        run: |
+          pwd
+          ls -a 
+          echo $GITHUB_WORKSPACE
