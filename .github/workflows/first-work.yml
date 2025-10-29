@@ -1,0 +1,13 @@
+name: First Workflow 
+
+on:  push
+
+jobs:
+  my-first-jobs: 
+    runs-on: ubuntu-latest
+    steps:
+      -name: Print a message
+      run: echo "Hello this is my first action"
+
+      -name: Print Message 2
+      run: echo "Hello message 2..........."
