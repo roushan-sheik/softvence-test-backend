@@ -6,11 +6,19 @@ jobs:
   test-code:
     runs-on: ubuntu-latest
     steps:
-      - name: copying the codes...
+      - name: Copying the codes...
         uses: actions/checkout@v4
-      - name: install node-js
+        
+      - name: Install node-js
         uses: actions/setup-node@v4
         with:
           node-version: 22.20.0
-      - name: check node version...
+
+      - name: Check node version...
         run: node -v
+
+      - name: Run the tests
+        run: npm install --frozen-lockfile
+
+      - name: Run the tests
+        run: npm test
