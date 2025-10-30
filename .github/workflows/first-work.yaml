@@ -1,24 +1,34 @@
 name: Ready to deploy
 
-on: [push, workflow_dispatch]
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   test-code:
     runs-on: ubuntu-latest
     steps:
-      - name: Copying the codes...
+      - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Install node-js
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22.20.0
 
-      - name: Check node version...
+      - name: Verify Node.js version
         run: node -v
 
-      - name: Run the tests
+      - name: Install dependencies
         run: npm install --frozen-lockfile
 
-      - name: Run the tests
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Start server in background
+        run: |
+          npm run start:dev &   # Or "npm run start:prod" if you want prod build
+          sleep 5               # Wait for the server to start
+
+      - name: Run tests
         run: npm test
