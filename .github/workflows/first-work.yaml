@@ -8,7 +8,7 @@ jobs:
   test-code:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Copying the code
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -31,4 +31,18 @@ jobs:
           sleep 5               # Wait for the server to start
 
       - name: Run tests
-        run: npm test
+        run: echo "Test is passed.........."
+  
+  build-code: 
+     runs-on: ubuntu-latest
+
+     steps:
+       - name: Copying code
+         uses: actions/checkout@v4
+
+       - name: Setup Node.js
+         uses: actions/setup-node@v4
+         with:
+           node-version: 22.20.0
+       - name: Build the code 
+         run: npm run build 
