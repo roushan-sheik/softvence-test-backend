@@ -20,7 +20,7 @@ jobs:
         run: node -v
 
       - name: Install dependencies
-        run: npm install --frozen-lockfile
+        run: npm install
 
       - name: Build TypeScript
         run: npm run build
@@ -46,7 +46,7 @@ jobs:
           node-version: 22.20.0
 
       - name: Install dependencies
-        run: npm install --frozen-lockfile
+        run: npm install
 
       - name: Build the code
         run: npm run build
@@ -64,7 +64,7 @@ jobs:
           node-version: 22.20.0
 
       - name: Install dependencies
-        run: npm install --frozen-lockfile
+        run: npm install
 
       - name: Build the code
         run: npm run build
