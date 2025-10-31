@@ -1,71 +1,43 @@
-name: Ready to deploy
-
+name: Deploy to EC2
 on:
   push:
-  workflow_dispatch:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
 jobs:
-  test-code:
+  build:
     runs-on: ubuntu-latest
-    steps:
-      - name: Copying the code
-        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.20.0
-
-      - name: Verify Node.js version
-        run: node -v
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build TypeScript
-        run: echo "npm run build"
-
-      - name: Start server in background
-        run: echo "Server start...."
-
-      - name: Run tests
-        run: echo "✅ Test is passed.........."
-
-  build-code:
-    runs-on: ubuntu-latest
-    needs: test-code # ✅ This ensures build runs only after tests pass
     steps:
       - name: Copying code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Install Node Js
+        uses: actions/setup-node@v3
         with:
-          node-version: 22.20.0
+          node-version: 20.15
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build the code
+      - name: Build the app
         run: echo "npm run build"
 
-  deploy-code:
+  deploy:
     runs-on: ubuntu-latest
-    needs: build-code # ✅ Deploy only after successful build
+    needs: build
     steps:
-      - name: Checkout code for deployment
-        uses: actions/checkout@v4
+      - name: Copying code
+        uses: actions/checkout@v3
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Install Node Js
+        uses: actions/setup-node@v3
         with:
-          node-version: 22.20.0
+          node-version: 20.15
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build the code
+      - name: Build the app
         run: echo "npm run build"
-
-      - name: Deploy the code
-        run: echo "🚀 Deployment step executed successfully!"
