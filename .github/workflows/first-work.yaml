@@ -22,7 +22,7 @@ jobs:
         run: npm install
 
       - name: Build the app
-        run: echo "npm run build"
+        run: npm run build
 
   deploy:
     runs-on: ubuntu-latest
@@ -40,4 +40,13 @@ jobs:
         run: npm install
 
       - name: Build the app
-        run: echo "npm run build"
+        run: npm run build
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh/id_rsa
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Request, Response} from "express"
+import type { Request, Response } from "express";
 
 const router = Router();
 
@@ -21,10 +21,10 @@ const router = Router();
  * description: A list of products.
  */
 router.get("/", (req: Request, res: Response) => {
-    res.status(200).json([
-        { id: 1, name: "Laptop", price: 80000 },
-        { id: 2, name: "Mouse", price: 1200 },
-    ]);
+  res.status(200).json([
+    { id: 1, name: "Laptop", price: 80000 },
+    { id: 2, name: "Mouse", price: 1200 },
+  ]);
 });
 
 /**
@@ -46,10 +46,14 @@ router.get("/", (req: Request, res: Response) => {
  * 404:
  * description: Product not found
  */
-router.get("/:id", (req: Request, res: Response) => {
-    const { id } = req.params;
-    res.status(200).json({ id: parseInt(id), name: `Product ${id}`, price: Math.random() * 1000 });
-});
+// router.get("/:id", (req: Request, res: Response) => {
+//   const { id } = req.params;
+//   res.status(200).json({
+//     id: parseInt(id),
+//     name: `Product ${id}`,
+//     price: Math.random() * 1000,
+//   });
+// });
 
 /**
  * @openapi
@@ -73,8 +77,12 @@ router.get("/:id", (req: Request, res: Response) => {
  * description: Product created successfully.
  */
 router.post("/", (req: Request, res: Response) => {
-    const { name, price } = req.body;
-    res.status(201).json({ success: true, message: "Product created", data: { id: Date.now(), name, price } });
+  const { name, price } = req.body;
+  res.status(201).json({
+    success: true,
+    message: "Product created",
+    data: { id: Date.now(), name, price },
+  });
 });
 
 /**
@@ -104,8 +112,8 @@ router.post("/", (req: Request, res: Response) => {
  * description: Product updated successfully.
  */
 router.patch("/:id", (req: Request, res: Response) => {
-    const { id } = req.params;
-    res.status(200).json({ success: true, message: `Product ${id} updated.` });
+  const { id } = req.params;
+  res.status(200).json({ success: true, message: `Product ${id} updated.` });
 });
 
 /**
@@ -125,9 +133,8 @@ router.patch("/:id", (req: Request, res: Response) => {
  * description: Product deleted successfully.
  */
 router.delete("/:id", (req: Request, res: Response) => {
-    const { id } = req.params;
-    res.status(200).json({ success: true, message: `Product ${id} deleted.` });
+  const { id } = req.params;
+  res.status(200).json({ success: true, message: `Product ${id} deleted.` });
 });
-
 
 export const productRoutes = router;
