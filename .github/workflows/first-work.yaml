@@ -2,54 +2,25 @@ name: Deploy to EC2
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Copying code
-        uses: actions/checkout@v3
-
-      - name: Install Node Js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20.15
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build the app
-        run: npm run build
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist-artifact
-          path: dist
-
   deploy:
     runs-on: ubuntu-latest
-    needs: build
     steps:
-      - name: Copying code
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install Node Js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20.15
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Download build artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: dist-artifact
-          path: .
+      - name: Build application
+        run: npm run build
 
       - name: Configure SSH
         env:
@@ -65,22 +36,34 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
-          # Create deployment directory 
+          # Create deployment directory
           ssh $EC2_USER@$EC2_HOST "mkdir -p ~/app"
 
-          # Copy files to EC2 instance 
-          rsync -avz \
+          # Copy built files to EC2
+          rsync -avz --delete \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='.github' \
+            --exclude='src' \
+            --exclude='tsconfig.json' \
+            --exclude='.env.example' \
+            --include='dist/**' \
+            --include='package*.json' \
+            --include='.env' \
             . $EC2_USER@$EC2_HOST:~/app/
 
-          # Deploy application on EC2
+          # Install dependencies and restart application
           ssh $EC2_USER@$EC2_HOST << 'EOF'
-            export PATH=$PATH:/run/user/1000/fnm_multishells/112424_1734077954807/bin
+            # Load node environment
+            export PATH=$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node | tail -1)/bin:$PATH
+            
             cd ~/app
-            npm install --production
-            pm2 delete nodejs-app || true
-            pm2 start dist/index.js --name nodejs-app
+            
+            # Install production dependencies only
+            npm ci --omit=dev
+            
+            # Restart with PM2
+            pm2 delete nodejs-app 2>/dev/null || true
+            pm2 start dist/index.js --name nodejs-app --node-args="--es-module-specifier-resolution=node"
             pm2 save
           EOF
