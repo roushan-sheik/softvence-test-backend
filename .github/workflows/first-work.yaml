@@ -54,31 +54,31 @@ jobs:
 
           # Install dependencies and restart application
           ssh $EC2_USER@$EC2_HOST << 'EOF'
-            # Try multiple methods to load Node.js
+            # Set up Node.js path
+            export PATH="$HOME/.nvm/versions/node/v25.1.0/bin:$PATH"
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            # Try fnm
-            if [ -d "$HOME/.local/share/fnm" ]; then
-              export PATH="$HOME/.local/share/fnm:$PATH"
-              eval "$(fnm env --use-on-cd)"
+            # Install missing system library (requires sudo)
+            if ! ldconfig -p | grep -q libatomic.so.1; then
+              echo "Installing libatomic1..."
+              sudo apt-get update && sudo apt-get install -y libatomic1
             fi
-            
-            # Add common node paths
-            export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$PATH"
-            export PATH="/run/user/1000/fnm_multishells/112424_1734077954807/bin:$PATH"
             
             cd ~/app
             
-            # Verify node and npm are available
-            which node || { echo "Node.js not found in PATH"; exit 1; }
-            which npm || { echo "npm not found in PATH"; exit 1; }
-            
-            # Install production dependencies only
+            # Install production dependencies
             npm ci --omit=dev
+            
+            # Install PM2 globally if not present
+            if ! command -v pm2 &> /dev/null; then
+              echo "Installing PM2 globally..."
+              npm install -g pm2
+            fi
             
             # Restart with PM2
             pm2 delete nodejs-app 2>/dev/null || true
             pm2 start dist/index.js --name nodejs-app
             pm2 save
+            pm2 startup
           EOF
