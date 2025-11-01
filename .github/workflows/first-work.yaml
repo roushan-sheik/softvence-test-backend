@@ -31,7 +31,7 @@ jobs:
 
       - name: Run tests
         run: npm test || echo "⚠️ No tests found"
-        continue-on-error: false # Tests fail করলে deploy হবে না
+        continue-on-error: false
 
       - name: Build application
         run: npm run build
@@ -86,20 +86,13 @@ jobs:
             . $EC2_USER@$EC2_HOST:~/app/
 
           echo "⚙️ Configuring application on EC2..."
-          ssh $EC2_USER@$EC2_HOST "NODE_ENV='$NODE_ENV' PORT='$PORT' MONGO_URI='$MONGO_URI'" 'bash -s' << 'EOF'
+          ssh $EC2_USER@$EC2_HOST "export DEPLOY_NODE_ENV='$NODE_ENV' DEPLOY_PORT='$PORT' DEPLOY_MONGO_URI='$MONGO_URI'" 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
           nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
 
           cd ~/app
-
-          echo "Creating .env file..."
-          echo "NODE_ENV=$NODE_ENV" > .env
-          echo "PORT=$PORT" >> .env
-          echo "MONGO_URI=$MONGO_URI" >> .env
-
-          echo "✅ Environment file created"
 
           echo "📦 Installing dependencies..."
           npm ci --omit=dev --silent
@@ -109,18 +102,27 @@ jobs:
             npm install -g pm2
           fi
 
-          echo "🔄 Zero-downtime reload..."
+          echo "🔄 Deploying with environment variables..."
 
           # Check if app exists
           if pm2 list | grep -q "nodejs-app"; then
-            # Use reload for zero downtime
-            pm2 reload nodejs-app --update-env
-            echo "✅ Application reloaded (zero downtime)"
-          else
-            # First time deployment
-            pm2 start dist/index.js --name nodejs-app --instances 2 --exec-mode cluster --time
-            echo "✅ Application started in cluster mode"
+            echo "🔄 Reloading existing application..."
+            # Use delete + start for guaranteed env variable update
+            pm2 delete nodejs-app
+            sleep 2
           fi
+
+          # Start application with environment variables
+          NODE_ENV="$DEPLOY_NODE_ENV" \
+          PORT="$DEPLOY_PORT" \
+          MONGO_URI="$DEPLOY_MONGO_URI" \
+          pm2 start dist/index.js \
+            --name nodejs-app \
+            --instances 2 \
+            --exec-mode cluster \
+            --time \
+            --max-memory-restart 500M \
+            --exp-backoff-restart-delay=100
 
           pm2 save
 
@@ -224,7 +226,7 @@ jobs:
             rm -rf ~/app
             cp -r $LATEST_BACKUP ~/app
             cd ~/app
-            pm2 reload nodejs-app
+            pm2 restart nodejs-app || pm2 start dist/index.js --name nodejs-app --instances 2 --exec-mode cluster
             echo "✅ Rollback completed!"
             pm2 list
           else
@@ -245,7 +247,7 @@ jobs:
             echo "📍 Server: $EC2_HOST"
             echo "🔗 URL: http://$EC2_HOST:$PORT"
             echo "⏰ Time: $(date)"
-            echo "🚀 Zero downtime deployment completed"
+            echo "🚀 Deployment completed"
           else
             echo "❌ ================================"
             echo "❌ Deployment Failed & Rolled Back!"
