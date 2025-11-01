@@ -83,50 +83,40 @@ jobs:
             . $EC2_USER@$EC2_HOST:~/app/
 
           echo "⚙️ Configuring application on EC2..."
-          ssh $EC2_USER@$EC2_HOST bash << 'ENDSSH'
-            # Setup Node.js environment
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-            
-            # Use correct Node version
-            nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
-            
-            cd ~/app
-            
-            # Create .env file from secrets
-            cat > .env << 'ENVEOF' NODE_ENV=${NODE_ENV}PORT=${PORT}MONGO_URI=${MONGO_URI}ENVEOF
+          ssh $EC2_USER@$EC2_HOST "NODE_ENV='$NODE_ENV' PORT='$PORT' MONGO_URI='$MONGO_URI'" bash << 'ENDSSH'
 
-            # Replace placeholders with actual values
-            sed -i "s|\${NODE_ENV}|${NODE_ENV}|g" .env
-            sed -i "s|\${PORT}|${PORT}|g" .env
-            sed -i "s|\${MONGO_URI}|${MONGO_URI}|g" .env
-            
-            echo "✅ Environment file created"
-            
-            # Install production dependencies
-            echo "📦 Installing dependencies..."
-            npm ci --omit=dev --silent
-            
-            # Install PM2 globally if not present
-            if ! command -v pm2 &> /dev/null; then
-              echo "📥 Installing PM2..."
-              npm install -g pm2
-            fi
-            
-            # Restart application with PM2
-            echo "🔄 Restarting application..."
-            
-            # Use reload for zero-downtime (if app exists), otherwise start
-            pm2 reload nodejs-app --update-env 2>/dev/null || \
-            pm2 start dist/index.js --name nodejs-app --time
-            
-            # Save PM2 process list
-            pm2 save
-            
-            # Show status
-            pm2 list
-            
-            echo "✅ Application deployed successfully!"ENDSSH
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+          nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
+
+          cd ~/app
+
+          echo "Creating .env file..."
+          cat > .env << 'ENVFILE'NODE_ENV=${NODE_ENV}PORT=${PORT}MONGO_URI=${MONGO_URI}ENVFILE
+
+          sed -i "s/\${NODE_ENV}/$NODE_ENV/g" .env
+          sed -i "s/\${PORT}/$PORT/g" .env
+          sed -i "s|\${MONGO_URI}|$MONGO_URI|g" .env
+
+          echo "✅ Environment file created"
+          cat .env
+
+          echo "📦 Installing dependencies..."
+          npm ci --omit=dev --silent
+
+          if ! command -v pm2 &> /dev/null; then
+            echo "📥 Installing PM2..."
+            npm install -g pm2
+          fi
+
+          echo "🔄 Restarting application..."
+          pm2 reload nodejs-app --update-env 2>/dev/null || pm2 start dist/index.js --name nodejs-app --time
+
+          pm2 save
+          pm2 list
+
+          echo "✅ Application deployed successfully!"ENDSSH
 
       - name: Health check
         env:
@@ -136,7 +126,6 @@ jobs:
           echo "🏥 Performing health check..."
           sleep 10
 
-          # Try health endpoint
           if curl -f --max-time 10 http://$EC2_HOST:$PORT/health 2>/dev/null; then
             echo "✅ Health check passed!"
           elif curl -f --max-time 10 http://$EC2_HOST:$PORT/ 2>/dev/null; then
@@ -154,24 +143,23 @@ jobs:
         run: |
           echo "⚠️ Deployment failed! Rolling back..."
 
-          ssh $EC2_USER@$EC2_HOST << 'EOF'
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-            nvm use 20.15.0
-            
-            LATEST_BACKUP=$(ls -dt ~/app_backup_* 2>/dev/null | head -1)
-            
-            if [ -d "$LATEST_BACKUP" ]; then
-              echo "📦 Restoring from backup: $LATEST_BACKUP"
-              rm -rf ~/app
-              cp -r $LATEST_BACKUP ~/app
-              cd ~/app
-              pm2 restart nodejs-app
-              echo "✅ Rollback completed!"
-            else
-              echo "❌ No backup found for rollback!"
-            fi
-          EOF
+          ssh $EC2_USER@$EC2_HOST << 'ROLLBACK'
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm use 20.15.0
+
+          LATEST_BACKUP=$(ls -dt ~/app_backup_* 2>/dev/null | head -1)
+
+          if [ -d "$LATEST_BACKUP" ]; then
+            echo "📦 Restoring from backup: $LATEST_BACKUP"
+            rm -rf ~/app
+            cp -r $LATEST_BACKUP ~/app
+            cd ~/app
+            pm2 restart nodejs-app
+            echo "✅ Rollback completed!"
+          else
+            echo "❌ No backup found for rollback!"
+          fiROLLBACK
 
       - name: Deployment summary
         if: always()
