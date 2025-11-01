@@ -54,10 +54,25 @@ jobs:
 
           # Install dependencies and restart application
           ssh $EC2_USER@$EC2_HOST << 'EOF'
-            # Load node environment
-            source ~/.bashrc
+            # Try multiple methods to load Node.js
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # Try fnm
+            if [ -d "$HOME/.local/share/fnm" ]; then
+              export PATH="$HOME/.local/share/fnm:$PATH"
+              eval "$(fnm env --use-on-cd)"
+            fi
+            
+            # Add common node paths
+            export PATH="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node 2>/dev/null | tail -1)/bin:$PATH"
+            export PATH="/run/user/1000/fnm_multishells/112424_1734077954807/bin:$PATH"
             
             cd ~/app
+            
+            # Verify node and npm are available
+            which node || { echo "Node.js not found in PATH"; exit 1; }
+            which npm || { echo "npm not found in PATH"; exit 1; }
             
             # Install production dependencies only
             npm ci --omit=dev
