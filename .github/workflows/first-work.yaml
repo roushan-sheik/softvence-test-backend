@@ -45,15 +45,13 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
-          ssh $EC2_USER@$EC2_HOST << 'EOF'
-            if [ -d ~/app ]; then
-              BACKUP_DIR=~/app_backup_$(date +%Y%m%d_%H%M%S)
-              echo "📦 Creating backup: $BACKUP_DIR"
-              cp -r ~/app $BACKUP_DIR
-              
-              # Keep only last 5 backups
-              ls -dt ~/app_backup_* 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
-            fi
+          ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
+          if [ -d ~/app ]; then
+            BACKUP_DIR=~/app_backup_$(date +%Y%m%d_%H%M%S)
+            echo "📦 Creating backup: $BACKUP_DIR"
+            cp -r ~/app $BACKUP_DIR
+            ls -dt ~/app_backup_* 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
+          fi
           EOF
 
       - name: Deploy to EC2
@@ -65,7 +63,7 @@ jobs:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
           echo "🚀 Starting deployment to $EC2_HOST"
-          
+
           ssh $EC2_USER@$EC2_HOST "mkdir -p ~/app"
 
           echo "📤 Uploading files to EC2..."
@@ -83,63 +81,61 @@ jobs:
             . $EC2_USER@$EC2_HOST:~/app/
 
           echo "⚙️ Configuring application on EC2..."
-          ssh $EC2_USER@$EC2_HOST "NODE_ENV='$NODE_ENV' PORT='$PORT' MONGO_URI='$MONGO_URI'" bash << 'ENDSSH'
-          
+          ssh $EC2_USER@$EC2_HOST "NODE_ENV='$NODE_ENV' PORT='$PORT' MONGO_URI='$MONGO_URI'" 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-          
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
           nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
-          
+
           cd ~/app
-          
+
           echo "Creating .env file..."
-          cat > .env << 'ENVFILE'NODE_ENV=${NODE_ENV}PORT=${PORT}MONGO_URI=${MONGO_URI}ENVFILE
-          
-          sed -i "s/\${NODE_ENV}/$NODE_ENV/g" .env
-          sed -i "s/\${PORT}/$PORT/g" .env
-          sed -i "s|\${MONGO_URI}|$MONGO_URI|g" .env
-          
+          echo "NODE_ENV=$NODE_ENV" > .env
+          echo "PORT=$PORT" >> .env
+          echo "MONGO_URI=$MONGO_URI" >> .env
+
           echo "✅ Environment file created"
-          
+
           echo "📦 Installing dependencies..."
           npm ci --omit=dev --silent
-          
+
           if ! command -v pm2 &> /dev/null; then
             echo "📥 Installing PM2..."
             npm install -g pm2
           fi
-          
+
           echo "🔄 Restarting application..."
           pm2 delete nodejs-app 2>/dev/null || true
           pm2 start dist/index.js --name nodejs-app --time
-          
           pm2 save
-          
+
           echo "✅ Application deployed successfully!"
-          pm2 listENDSSH
+          pm2 list
+          EOF
 
       - name: Verify Deployment
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
-          PORT: ${{ secrets.PORT }}
         run: |
           echo "🔍 Verifying deployment..."
           sleep 5
-          
-          ssh $EC2_USER@$EC2_HOST << 'VERIFY'
+
+          ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           nvm use 20.15.0
-          
+
           if pm2 list | grep -q "nodejs-app.*online"; then
             echo "✅ Application is running in PM2!"
             pm2 info nodejs-app
+            exit 0
           else
             echo "❌ Application failed to start!"
             pm2 logs nodejs-app --lines 50 --nostream
             exit 1
-          fiVERIFY
+          fi
+          EOF
 
       - name: Rollback on failure
         if: failure()
@@ -148,14 +144,14 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           echo "⚠️ Deployment failed! Rolling back..."
-          
-          ssh $EC2_USER@$EC2_HOST << 'ROLLBACK'
+
+          ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           nvm use 20.15.0
-          
+
           LATEST_BACKUP=$(ls -dt ~/app_backup_* 2>/dev/null | head -1)
-          
+
           if [ -d "$LATEST_BACKUP" ]; then
             echo "📦 Restoring from backup: $LATEST_BACKUP"
             rm -rf ~/app
@@ -165,17 +161,21 @@ jobs:
             echo "✅ Rollback completed!"
           else
             echo "❌ No backup found for rollback!"
-          fiROLLBACK
+          fi
+          EOF
 
       - name: Deployment summary
         if: always()
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          PORT: ${{ secrets.PORT }}
         run: |
           if [ ${{ job.status }} == 'success' ]; then
             echo "🎉 ================================"
             echo "🎉 Deployment Successful!"
             echo "🎉 ================================"
-            echo "📍 Server: ${{ secrets.EC2_HOST }}"
-            echo "🔗 URL: http://${{ secrets.EC2_HOST }}:${{ secrets.PORT }}"
+            echo "📍 Server: $EC2_HOST"
+            echo "🔗 URL: http://$EC2_HOST:$PORT"
             echo "⏰ Time: $(date)"
           else
             echo "❌ ================================"
