@@ -191,20 +191,20 @@ jobs:
 
           for i in {1..6}; do
             ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-            nvm use 20.15.0
-            
-            STATUS=$(pm2 jlist | jq -r '.[] | select(.name=="nodejs-app") | .pm2_env.status')
-            RESTARTS=$(pm2 jlist | jq -r '.[] | select(.name=="nodejs-app") | .pm2_env.restart_time')
-            
-            echo "Status: $STATUS | Restarts: $RESTARTS"
-            
-            if [ "$STATUS" != "online" ]; then
-              echo "❌ App went offline!"
-              exit 1
-            fi
-            EOF
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          nvm use 20.15.0
+
+          STATUS=$(pm2 jlist | jq -r '.[] | select(.name=="nodejs-app") | .pm2_env.status')
+          RESTARTS=$(pm2 jlist | jq -r '.[] | select(.name=="nodejs-app") | .pm2_env.restart_time')
+
+          echo "Status: $STATUS | Restarts: $RESTARTS"
+
+          if [ "$STATUS" != "online" ]; then
+            echo "❌ App went offline!"
+            exit 1
+          fi
+          EOF
             
             sleep 5
           done
