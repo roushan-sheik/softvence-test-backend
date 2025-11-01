@@ -8,10 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20.15
           cache: "npm"
@@ -55,7 +55,7 @@ jobs:
           # Install dependencies and restart application
           ssh $EC2_USER@$EC2_HOST << 'EOF'
             # Load node environment
-            export PATH=$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node | tail -1)/bin:$PATH
+            source ~/.bashrc
             
             cd ~/app
             
@@ -64,6 +64,6 @@ jobs:
             
             # Restart with PM2
             pm2 delete nodejs-app 2>/dev/null || true
-            pm2 start dist/index.js --name nodejs-app --node-args="--es-module-specifier-resolution=node"
+            pm2 start dist/index.js --name nodejs-app
             pm2 save
           EOF
