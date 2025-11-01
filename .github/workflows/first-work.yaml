@@ -86,7 +86,7 @@ jobs:
             . $EC2_USER@$EC2_HOST:~/app/
 
           echo "⚙️ Configuring application on EC2..."
-          ssh $EC2_USER@$EC2_HOST "export DEPLOY_NODE_ENV='$NODE_ENV' DEPLOY_PORT='$PORT' DEPLOY_MONGO_URI='$MONGO_URI'" 'bash -s' << 'EOF'
+          ssh $EC2_USER@$EC2_HOST "DEPLOY_NODE_ENV='$NODE_ENV' DEPLOY_PORT='$PORT' DEPLOY_MONGO_URI='$MONGO_URI' bash -s" << 'EOF'
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
