@@ -55,29 +55,6 @@ jobs:
           fi
           EOF
 
-      - name: Create PM2 Ecosystem File
-        env:
-          NODE_ENV: ${{ secrets.NODE_ENV }}
-          PORT: ${{ secrets.PORT }}
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-        run: |
-          cat > ecosystem.config.js << EOFJS
-          module.exports = {
-            apps: [{
-              name: 'nodejs-app',
-              script: './dist/index.js',
-              instances: 2,
-              exec_mode: 'cluster',
-              max_memory_restart: '500M',
-              env_production: {
-                NODE_ENV: '$NODE_ENV',
-                PORT: '$PORT',
-                MONGO_URI: '$MONGO_URI'
-              }
-            }]
-          };
-          EOFJS
-
       - name: Deploy to EC2 (Zero Downtime)
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -102,17 +79,37 @@ jobs:
             --exclude='.env.example' \
             --include='dist/**' \
             --include='package*.json' \
-            --include='ecosystem.config.js' \
             . $EC2_USER@$EC2_HOST:~/app/
 
-          echo "⚙️ Configuring application on EC2..."
-          ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
-          export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          echo "⚙️ Creating ecosystem file and deploying..."
+          ssh $EC2_USER@$EC2_HOST bash <<ENDSSH
+          export NVM_DIR="\$HOME/.nvm"
+          [ -s "\$NVM_DIR/nvm.sh" ] && . "\$NVM_DIR/nvm.sh"
 
           nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
 
           cd ~/app
+
+          # Create ecosystem.config.js with actual values
+          cat > ecosystem.config.js <<'ECOFILE'
+          module.exports = {
+            apps: [{
+              name: 'nodejs-app',
+              script: './dist/index.js',
+              instances: 2,
+              exec_mode: 'cluster',
+              max_memory_restart: '500M',
+              env_production: {
+                NODE_ENV: '$NODE_ENV',
+                PORT: '$PORT',
+                MONGO_URI: '$MONGO_URI'
+              }
+            }]
+          };
+          ECOFILE
+
+          echo "✅ Ecosystem file created"
+          cat ecosystem.config.js
 
           echo "📦 Installing dependencies..."
           npm ci --omit=dev --silent
@@ -126,11 +123,11 @@ jobs:
 
           # Check if app exists
           if pm2 list | grep -q "nodejs-app"; then
-            # Use reload for zero downtime
+            echo "Reloading existing app..."
             pm2 reload ecosystem.config.js --env production
             echo "✅ Application reloaded (zero downtime)"
           else
-            # First time deployment
+            echo "Starting new app..."
             pm2 start ecosystem.config.js --env production
             echo "✅ Application started in cluster mode"
           fi
@@ -140,7 +137,7 @@ jobs:
           echo "✅ Deployment completed!"
           pm2 list
           pm2 info nodejs-app
-          EOF
+          ENDSSH
 
       - name: Verify Deployment
         env:
@@ -159,10 +156,11 @@ jobs:
           if pm2 list | grep -q "nodejs-app.*online"; then
             echo "✅ Application is running in PM2!"
             
-            ERROR_COUNT=$(pm2 logs nodejs-app --lines 50 --nostream 2>/dev/null | grep -i "error" | wc -l)
-            if [ "$ERROR_COUNT" -gt 5 ]; then
-              echo "⚠️ Found $ERROR_COUNT errors in logs"
-              pm2 logs nodejs-app --lines 20 --nostream
+            # Check recent errors (last 10 lines only)
+            RECENT_ERRORS=$(pm2 logs nodejs-app --lines 10 --nostream 2>/dev/null | grep -i "error" | wc -l)
+            if [ "$RECENT_ERRORS" -gt 3 ]; then
+              echo "⚠️ Found $RECENT_ERRORS recent errors in logs"
+              pm2 logs nodejs-app --lines 10 --nostream
               exit 1
             fi
             
@@ -170,7 +168,7 @@ jobs:
             exit 0
           else
             echo "❌ Application failed to start!"
-            pm2 logs nodejs-app --lines 50 --nostream
+            pm2 logs nodejs-app --lines 30 --nostream
             exit 1
           fi
           EOF
