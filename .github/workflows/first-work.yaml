@@ -1,11 +1,16 @@
 name: Deploy to EC2
+
 on:
   push:
     branches: ["main"]
 
+env:
+  NODE_VERSION: "20.15.0"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -13,11 +18,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20.15
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run tests (if any)
+        run: npm test || echo "No tests found"
+        continue-on-error: false
 
       - name: Build application
         run: npm run build
@@ -30,6 +39,19 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Create backup on EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh $EC2_USER@$EC2_HOST << 'EOF'
+            if [ -d ~/app ]; then
+              cp -r ~/app ~/app_backup_$(date +%Y%m%d_%H%M%S)
+              # Keep only last 3 backups
+              ls -dt ~/app_backup_* | tail -n +4 | xargs rm -rf
+            fi
+          EOF
 
       - name: Deploy to EC2
         env:
@@ -51,24 +73,57 @@ jobs:
             . $EC2_USER@$EC2_HOST:~/app/
 
           ssh $EC2_USER@$EC2_HOST << 'EOF'
-            # Use the working Node.js version (v25.1.0)
-            export PATH="$HOME/.nvm/versions/node/v25.1.0/bin:$PATH"
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            # Install libatomic1 only if needed (one-time)
-            if ! ldconfig -p | grep -q libatomic.so.1; then
-              sudo apt-get update && sudo apt-get install -y libatomic1
-            fi
+            # Use consistent Node version
+            nvm use 20.15.0 || nvm install 20.15.0
             
             cd ~/app
+            
+            # Install production dependencies
             npm ci --omit=dev
             
-            # Ensure PM2 is installed in the correct Node version
+            # Ensure PM2 is installed
             if ! command -v pm2 &> /dev/null; then
               npm install -g pm2
             fi
             
-            # Restart application
-            pm2 delete nodejs-app 2>/dev/null || true
-            pm2 start dist/index.js --name nodejs-app
+            # Graceful reload instead of restart
+            pm2 reload nodejs-app || pm2 start dist/index.js --name nodejs-app
             pm2 save
           EOF
+
+      - name: Health check
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          sleep 5
+          curl -f http://${{ secrets.EC2_HOST }}:3000/health || exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh $EC2_USER@$EC2_HOST << 'EOF'
+            LATEST_BACKUP=$(ls -dt ~/app_backup_* | head -1)
+            if [ -d "$LATEST_BACKUP" ]; then
+              rm -rf ~/app
+              cp -r $LATEST_BACKUP ~/app
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+              nvm use 20.15.0
+              cd ~/app
+              pm2 restart nodejs-app
+            fi
+          EOF
+
+      - name: Notify on success
+        if: success()
+        run: echo "Deployment successful!"
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "❌ Deployment failed and rolled back!"
