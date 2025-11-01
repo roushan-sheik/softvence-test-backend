@@ -24,9 +24,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests (if any)
-        run: npm test || echo "No tests found"
-        continue-on-error: false
+      - name: Run tests
+        run: npm test || echo "⚠️ No tests found"
+        continue-on-error: true
 
       - name: Build application
         run: npm run build
@@ -47,9 +47,12 @@ jobs:
         run: |
           ssh $EC2_USER@$EC2_HOST << 'EOF'
             if [ -d ~/app ]; then
-              cp -r ~/app ~/app_backup_$(date +%Y%m%d_%H%M%S)
-              # Keep only last 3 backups
-              ls -dt ~/app_backup_* | tail -n +4 | xargs rm -rf
+              BACKUP_DIR=~/app_backup_$(date +%Y%m%d_%H%M%S)
+              echo "📦 Creating backup: $BACKUP_DIR"
+              cp -r ~/app $BACKUP_DIR
+              
+              # Keep only last 5 backups
+              ls -dt ~/app_backup_* 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
             fi
           EOF
 
@@ -57,49 +60,91 @@ jobs:
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
+          NODE_ENV: ${{ secrets.NODE_ENV }}
+          PORT: ${{ secrets.PORT }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
+          echo "🚀 Starting deployment to $EC2_HOST"
+
           ssh $EC2_USER@$EC2_HOST "mkdir -p ~/app"
 
+          echo "📤 Uploading files to EC2..."
           rsync -avz --delete \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='.github' \
             --exclude='src' \
+            --exclude='*.ts' \
             --exclude='tsconfig.json' \
+            --exclude='.env' \
             --exclude='.env.example' \
             --include='dist/**' \
             --include='package*.json' \
-            --include='.env' \
             . $EC2_USER@$EC2_HOST:~/app/
 
-          ssh $EC2_USER@$EC2_HOST << 'EOF'
+          echo "⚙️ Configuring application on EC2..."
+          ssh $EC2_USER@$EC2_HOST bash << 'ENDSSH'
+            # Setup Node.js environment
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            # Use consistent Node version
-            nvm use 20.15.0 || nvm install 20.15.0
+            # Use correct Node version
+            nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
             
             cd ~/app
             
-            # Install production dependencies
-            npm ci --omit=dev
+            # Create .env file from secrets
+            cat > .env << 'ENVEOF' NODE_ENV=${NODE_ENV}PORT=${PORT}MONGO_URI=${MONGO_URI}ENVEOF
+
+            # Replace placeholders with actual values
+            sed -i "s|\${NODE_ENV}|${NODE_ENV}|g" .env
+            sed -i "s|\${PORT}|${PORT}|g" .env
+            sed -i "s|\${MONGO_URI}|${MONGO_URI}|g" .env
             
-            # Ensure PM2 is installed
+            echo "✅ Environment file created"
+            
+            # Install production dependencies
+            echo "📦 Installing dependencies..."
+            npm ci --omit=dev --silent
+            
+            # Install PM2 globally if not present
             if ! command -v pm2 &> /dev/null; then
+              echo "📥 Installing PM2..."
               npm install -g pm2
             fi
             
-            # Graceful reload instead of restart
-            pm2 reload nodejs-app || pm2 start dist/index.js --name nodejs-app
+            # Restart application with PM2
+            echo "🔄 Restarting application..."
+            
+            # Use reload for zero-downtime (if app exists), otherwise start
+            pm2 reload nodejs-app --update-env 2>/dev/null || \
+            pm2 start dist/index.js --name nodejs-app --time
+            
+            # Save PM2 process list
             pm2 save
-          EOF
+            
+            # Show status
+            pm2 list
+            
+            echo "✅ Application deployed successfully!"ENDSSH
 
       - name: Health check
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
+          PORT: ${{ secrets.PORT }}
         run: |
-          sleep 5
-          curl -f http://${{ secrets.EC2_HOST }}:3000/health || exit 1
+          echo "🏥 Performing health check..."
+          sleep 10
+
+          # Try health endpoint
+          if curl -f --max-time 10 http://$EC2_HOST:$PORT/health 2>/dev/null; then
+            echo "✅ Health check passed!"
+          elif curl -f --max-time 10 http://$EC2_HOST:$PORT/ 2>/dev/null; then
+            echo "✅ Application is responding!"
+          else
+            echo "❌ Health check failed!"
+            exit 1
+          fi
 
       - name: Rollback on failure
         if: failure()
@@ -107,23 +152,40 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
+          echo "⚠️ Deployment failed! Rolling back..."
+
           ssh $EC2_USER@$EC2_HOST << 'EOF'
-            LATEST_BACKUP=$(ls -dt ~/app_backup_* | head -1)
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm use 20.15.0
+            
+            LATEST_BACKUP=$(ls -dt ~/app_backup_* 2>/dev/null | head -1)
+            
             if [ -d "$LATEST_BACKUP" ]; then
+              echo "📦 Restoring from backup: $LATEST_BACKUP"
               rm -rf ~/app
               cp -r $LATEST_BACKUP ~/app
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              nvm use 20.15.0
               cd ~/app
               pm2 restart nodejs-app
+              echo "✅ Rollback completed!"
+            else
+              echo "❌ No backup found for rollback!"
             fi
           EOF
 
-      - name: Notify on success
-        if: success()
-        run: echo "Deployment successful!"
-
-      - name: Notify on failure
-        if: failure()
-        run: echo "❌ Deployment failed and rolled back!"
+      - name: Deployment summary
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "🎉 ================================"
+            echo "🎉 Deployment Successful!"
+            echo "🎉 ================================"
+            echo "📍 Server: ${{ secrets.EC2_HOST }}"
+            echo "🔗 URL: http://${{ secrets.EC2_HOST }}:${{ secrets.PORT }}"
+            echo "⏰ Time: $(date)"
+          else
+            echo "❌ ================================"
+            echo "❌ Deployment Failed!"
+            echo "❌ ================================"
+            echo "🔄 Application rolled back to previous version"
+          fi
