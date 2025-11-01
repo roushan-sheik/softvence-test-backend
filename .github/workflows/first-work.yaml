@@ -65,7 +65,7 @@ jobs:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
           echo "🚀 Starting deployment to $EC2_HOST"
-
+          
           ssh $EC2_USER@$EC2_HOST "mkdir -p ~/app"
 
           echo "📤 Uploading files to EC2..."
@@ -84,56 +84,62 @@ jobs:
 
           echo "⚙️ Configuring application on EC2..."
           ssh $EC2_USER@$EC2_HOST "NODE_ENV='$NODE_ENV' PORT='$PORT' MONGO_URI='$MONGO_URI'" bash << 'ENDSSH'
-
+          
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
+          
           nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
-
+          
           cd ~/app
-
+          
           echo "Creating .env file..."
           cat > .env << 'ENVFILE'NODE_ENV=${NODE_ENV}PORT=${PORT}MONGO_URI=${MONGO_URI}ENVFILE
-
+          
           sed -i "s/\${NODE_ENV}/$NODE_ENV/g" .env
           sed -i "s/\${PORT}/$PORT/g" .env
           sed -i "s|\${MONGO_URI}|$MONGO_URI|g" .env
-
+          
           echo "✅ Environment file created"
-          cat .env
-
+          
           echo "📦 Installing dependencies..."
           npm ci --omit=dev --silent
-
+          
           if ! command -v pm2 &> /dev/null; then
             echo "📥 Installing PM2..."
             npm install -g pm2
           fi
-
+          
           echo "🔄 Restarting application..."
-          pm2 reload nodejs-app --update-env 2>/dev/null || pm2 start dist/index.js --name nodejs-app --time
-
+          pm2 delete nodejs-app 2>/dev/null || true
+          pm2 start dist/index.js --name nodejs-app --time
+          
           pm2 save
-          pm2 list
+          
+          echo "✅ Application deployed successfully!"
+          pm2 listENDSSH
 
-          echo "✅ Application deployed successfully!"ENDSSH
-
-      - name: Health check
+      - name: Verify Deployment
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
           PORT: ${{ secrets.PORT }}
         run: |
-          echo "🏥 Performing health check..."
-          sleep 10
-
-          if curl -f --max-time 10 http://$EC2_HOST:$PORT/health 2>/dev/null; then
-            echo "✅ Health check passed!"
-          elif curl -f --max-time 10 http://$EC2_HOST:$PORT/ 2>/dev/null; then
-            echo "✅ Application is responding!"
+          echo "🔍 Verifying deployment..."
+          sleep 5
+          
+          ssh $EC2_USER@$EC2_HOST << 'VERIFY'
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm use 20.15.0
+          
+          if pm2 list | grep -q "nodejs-app.*online"; then
+            echo "✅ Application is running in PM2!"
+            pm2 info nodejs-app
           else
-            echo "❌ Health check failed!"
+            echo "❌ Application failed to start!"
+            pm2 logs nodejs-app --lines 50 --nostream
             exit 1
-          fi
+          fiVERIFY
 
       - name: Rollback on failure
         if: failure()
@@ -142,14 +148,14 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           echo "⚠️ Deployment failed! Rolling back..."
-
+          
           ssh $EC2_USER@$EC2_HOST << 'ROLLBACK'
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           nvm use 20.15.0
-
+          
           LATEST_BACKUP=$(ls -dt ~/app_backup_* 2>/dev/null | head -1)
-
+          
           if [ -d "$LATEST_BACKUP" ]; then
             echo "📦 Restoring from backup: $LATEST_BACKUP"
             rm -rf ~/app
@@ -175,5 +181,5 @@ jobs:
             echo "❌ ================================"
             echo "❌ Deployment Failed!"
             echo "❌ ================================"
-            echo "🔄 Application rolled back to previous version"
+            echo "🔄 Check logs for details"
           fi
