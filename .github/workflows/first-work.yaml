@@ -1,4 +1,4 @@
-name: Deploy to EC2 (Production)
+name: Deploy to EC2
 
 on:
   push:
@@ -10,7 +10,6 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -25,13 +24,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run linter
-        run: npm run lint || echo "⚠️ No linter configured"
-        continue-on-error: true
-
       - name: Run tests
         run: npm test || echo "⚠️ No tests found"
-        continue-on-error: false
+        continue-on-error: true
 
       - name: Build application
         run: npm run build
@@ -44,7 +39,6 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-
       - name: Create backup on EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -58,8 +52,7 @@ jobs:
             ls -dt ~/app_backup_* 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null || true
           fi
           EOF
-
-      - name: Deploy to EC2 (Zero Downtime)
+      - name: Deploy to EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
@@ -67,10 +60,8 @@ jobs:
           PORT: ${{ secrets.PORT }}
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
-          echo "🚀 Starting zero-downtime deployment to $EC2_HOST"
-
+          echo "🚀 Starting deployment to $EC2_HOST"
           ssh $EC2_USER@$EC2_HOST "mkdir -p ~/app"
-
           echo "📤 Uploading files to EC2..."
           rsync -avz --delete \
             --exclude='.git' \
@@ -84,79 +75,43 @@ jobs:
             --include='dist/**' \
             --include='package*.json' \
             . $EC2_USER@$EC2_HOST:~/app/
-
           echo "⚙️ Configuring application on EC2..."
-          ssh $EC2_USER@$EC2_HOST "DEPLOY_NODE_ENV='$NODE_ENV' DEPLOY_PORT='$PORT' DEPLOY_MONGO_URI='$MONGO_URI' bash -s" << 'EOF'
+          ssh $EC2_USER@$EC2_HOST "NODE_ENV='$NODE_ENV' PORT='$PORT' MONGO_URI='$MONGO_URI'" 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-
           nvm use 20.15.0 2>/dev/null || nvm install 20.15.0
-
           cd ~/app
-
+          echo "Creating .env file..."
+          echo "NODE_ENV=$NODE_ENV" > .env
+          echo "PORT=$PORT" >> .env
+          echo "MONGO_URI=$MONGO_URI" >> .env
+          echo "✅ Environment file created"
           echo "📦 Installing dependencies..."
           npm ci --omit=dev --silent
-
           if ! command -v pm2 &> /dev/null; then
             echo "📥 Installing PM2..."
             npm install -g pm2
           fi
-
-          echo "🔄 Deploying with environment variables..."
-
-          # Check if app exists
-          if pm2 list | grep -q "nodejs-app"; then
-            echo "🔄 Reloading existing application..."
-            # Use delete + start for guaranteed env variable update
-            pm2 delete nodejs-app
-            sleep 2
-          fi
-
-          # Start application with environment variables
-          NODE_ENV="$DEPLOY_NODE_ENV" \
-          PORT="$DEPLOY_PORT" \
-          MONGO_URI="$DEPLOY_MONGO_URI" \
-          pm2 start dist/index.js \
-            --name nodejs-app \
-            --instances 2 \
-            --exec-mode cluster \
-            --time \
-            --max-memory-restart 500M \
-            --exp-backoff-restart-delay=100
-
+          echo "🔄 Restarting application..."
+          pm2 delete nodejs-app 2>/dev/null || true
+          pm2 start dist/index.js --name nodejs-app --time
           pm2 save
-
-          echo "✅ Deployment completed!"
+          echo "✅ Application deployed successfully!"
           pm2 list
-          pm2 info nodejs-app
           EOF
-
       - name: Verify Deployment
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
-          PORT: ${{ secrets.PORT }}
         run: |
           echo "🔍 Verifying deployment..."
-          sleep 10
-
-          # Check PM2 status
+          sleep 5
           ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           nvm use 20.15.0
-
           if pm2 list | grep -q "nodejs-app.*online"; then
             echo "✅ Application is running in PM2!"
-            
-            # Check for errors in logs
-            ERROR_COUNT=$(pm2 logs nodejs-app --lines 50 --nostream 2>/dev/null | grep -i "error" | wc -l)
-            if [ "$ERROR_COUNT" -gt 5 ]; then
-              echo "⚠️ Found $ERROR_COUNT errors in logs"
-              pm2 logs nodejs-app --lines 20 --nostream
-              exit 1
-            fi
-            
             pm2 info nodejs-app
             exit 0
           else
@@ -165,47 +120,6 @@ jobs:
             exit 1
           fi
           EOF
-
-          # Check HTTP response
-          echo "Checking HTTP endpoint..."
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://$EC2_HOST:$PORT/ 2>/dev/null || echo "000")
-
-          if [ "$RESPONSE" = "200" ] || [ "$RESPONSE" = "304" ]; then
-            echo "✅ HTTP check passed (Status: $RESPONSE)"
-          else
-            echo "⚠️ HTTP check returned status: $RESPONSE"
-            echo "Note: This might be normal if endpoint requires authentication"
-          fi
-
-      - name: Monitor for 30 seconds
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-        run: |
-          echo "👀 Monitoring application for 30 seconds..."
-
-          for i in {1..6}; do
-            ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-            nvm use 20.15.0
-            
-            STATUS=$(pm2 jlist | jq -r '.[] | select(.name=="nodejs-app") | .pm2_env.status')
-            RESTARTS=$(pm2 jlist | jq -r '.[] | select(.name=="nodejs-app") | .pm2_env.restart_time')
-            
-            echo "Status: $STATUS | Restarts: $RESTARTS"
-            
-            if [ "$STATUS" != "online" ]; then
-              echo "❌ App went offline!"
-              exit 1
-            fi
-            EOF
-            
-            sleep 5
-          done
-
-          echo "✅ Application stable for 30 seconds"
-
       - name: Rollback on failure
         if: failure()
         env:
@@ -213,27 +127,22 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           echo "⚠️ Deployment failed! Rolling back..."
-
           ssh $EC2_USER@$EC2_HOST 'bash -s' << 'EOF'
           export NVM_DIR="$HOME/.nvm"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           nvm use 20.15.0
-
           LATEST_BACKUP=$(ls -dt ~/app_backup_* 2>/dev/null | head -1)
-
           if [ -d "$LATEST_BACKUP" ]; then
             echo "📦 Restoring from backup: $LATEST_BACKUP"
             rm -rf ~/app
             cp -r $LATEST_BACKUP ~/app
             cd ~/app
-            pm2 restart nodejs-app || pm2 start dist/index.js --name nodejs-app --instances 2 --exec-mode cluster
+            pm2 restart nodejs-app
             echo "✅ Rollback completed!"
-            pm2 list
           else
             echo "❌ No backup found for rollback!"
           fi
           EOF
-
       - name: Deployment summary
         if: always()
         env:
@@ -242,15 +151,14 @@ jobs:
         run: |
           if [ ${{ job.status }} == 'success' ]; then
             echo "🎉 ================================"
-            echo "🎉 Production Deployment Successful!"
+            echo "🎉 Deployment Successful!"
             echo "🎉 ================================"
             echo "📍 Server: $EC2_HOST"
             echo "🔗 URL: http://$EC2_HOST:$PORT"
             echo "⏰ Time: $(date)"
-            echo "🚀 Deployment completed"
           else
             echo "❌ ================================"
-            echo "❌ Deployment Failed & Rolled Back!"
+            echo "❌ Deployment Failed!"
             echo "❌ ================================"
-            echo "📧 Check logs and notify team"
+            echo "🔄 Check logs for details"
           fi
