@@ -36,10 +36,8 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
-          # Create deployment directory
           ssh $EC2_USER@$EC2_HOST "mkdir -p ~/app"
 
-          # Copy built files to EC2
           rsync -avz --delete \
             --exclude='.git' \
             --exclude='node_modules' \
@@ -52,33 +50,25 @@ jobs:
             --include='.env' \
             . $EC2_USER@$EC2_HOST:~/app/
 
-          # Install dependencies and restart application
           ssh $EC2_USER@$EC2_HOST << 'EOF'
-            # Set up Node.js path
+            # Use the working Node.js version (v25.1.0)
             export PATH="$HOME/.nvm/versions/node/v25.1.0/bin:$PATH"
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            # Install missing system library (requires sudo)
+            # Install libatomic1 only if needed (one-time)
             if ! ldconfig -p | grep -q libatomic.so.1; then
-              echo "Installing libatomic1..."
               sudo apt-get update && sudo apt-get install -y libatomic1
             fi
             
             cd ~/app
-            
-            # Install production dependencies
             npm ci --omit=dev
             
-            # Install PM2 globally if not present
+            # Ensure PM2 is installed in the correct Node version
             if ! command -v pm2 &> /dev/null; then
-              echo "Installing PM2 globally..."
               npm install -g pm2
             fi
             
-            # Restart with PM2
+            # Restart application
             pm2 delete nodejs-app 2>/dev/null || true
             pm2 start dist/index.js --name nodejs-app
             pm2 save
-            pm2 startup
           EOF
