@@ -66,11 +66,12 @@ jobs:
             --exclude='.github' \
             . $EC2_USER@$EC2_HOST:~/app/
 
-          # Install production dependencies on EC2
-          ssh $EC2_USER@$EC2_HOST "cd ~/app && export PATH=\$PATH:/run/user/1000/fnm_multishells/112424_1734077954807/bin && npm install"
-
-          # Stop existing PM2 Process if exists
-          ssh $EC2_USER@$EC2_HOST "export PATH=\$PATH:/run/user/1000/fnm_multishells/112424_1734077954807/bin && pm2 delete nodejs-app || true"
-
-          # Start the application with PM2
-          ssh $EC2_USER@$EC2_HOST "export PATH=\$PATH:/run/user/1000/fnm_multishells/112424_1734077954807/bin && cd ~/app && pm2 start dist/server.js --name nodejs-app"
+          # Deploy application on EC2
+          ssh $EC2_USER@$EC2_HOST << 'EOF'
+            export PATH=$PATH:/run/user/1000/fnm_multishells/112424_1734077954807/bin
+            cd ~/app
+            npm install --production
+            pm2 delete nodejs-app || true
+            pm2 start dist/index.js --name nodejs-app
+            pm2 save
+          EOF
