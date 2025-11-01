@@ -24,6 +24,12 @@ jobs:
       - name: Build the app
         run: npm run build
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist-artifact
+          path: dist
+
   deploy:
     runs-on: ubuntu-latest
     needs: build
@@ -39,8 +45,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build the app
-        run: npm run build
+      - name: Download build artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: dist-artifact
+          path: .
 
       - name: Configure SSH
         env:
